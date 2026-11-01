@@ -12,6 +12,7 @@ Sem Studio Manager e sem drivers estranhos: um servidor Node.js local fala com a
 ![Mesas](https://img.shields.io/badge/mesas-01V96%20%7C%2001V96i-3fb6ff)
 ![Status](https://img.shields.io/badge/status-beta-orange)
 ![PRs](https://img.shields.io/badge/PRs-bem--vindos-brightgreen)
+![Licença MIT](https://img.shields.io/badge/licen%C3%A7a-MIT-blue)
 
 <img src="docs/img/mixer.png" alt="Mixer" width="100%">
 
@@ -121,7 +122,9 @@ Leia o **[CONTRIBUTING.md](CONTRIBUTING.md)** para o fluxo de trabalho, os padr�
 - [ ] Instalador para macOS e Linux
 - [ ] Testes automatizados com uma mesa simulada
 
-## ⚖️ Aviso legal
+## ⚖️ Licença e aviso legal
+
+Código sob a licença **[MIT](LICENSE)**.
 
 Projeto independente, sem afiliação com a Yamaha Corporation ou com o AirFader. "Yamaha", "01V96" e "Studio Manager" são marcas de seus donos. O protocolo foi documentado por engenharia reversa **para fins de interoperabilidade**. O repositório não contém nenhum software proprietário. Use por sua conta e risco: teste antes de usar ao vivo.
 
