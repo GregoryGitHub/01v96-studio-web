@@ -1,0 +1,25 @@
+name: Suporte a nova mesa
+description: Quero (ajudar a) suportar outra mesa Yamaha
+labels: [nova-mesa]
+body:
+  - type: input
+    id: model
+    attributes:
+      label: Modelo da mesa
+      placeholder: "DM1000, 02R96, LS9-16…"
+    validations:
+      required: true
+  - type: textarea
+    id: probe
+    attributes:
+      label: Saída do re/scripts/probe.js
+      description: Portas MIDI listadas e respostas recebidas (só leitura).
+      render: text
+  - type: checkboxes
+    id: help
+    attributes:
+      label: Como você pode ajudar?
+      options:
+        - label: Tenho a mesa e posso testar
+        - label: Tenho o Studio Manager dessa mesa para extrair as tabelas
+        - label: Posso implementar

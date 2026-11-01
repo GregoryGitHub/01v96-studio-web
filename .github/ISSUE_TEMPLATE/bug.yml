@@ -1,0 +1,27 @@
+name: Bug
+description: Algo não funcionou como esperado
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: O que aconteceu?
+      description: Passos para reproduzir, o que você esperava e o que aconteceu.
+    validations:
+      required: true
+  - type: input
+    id: console
+    attributes:
+      label: Mesa e firmware
+      placeholder: "01V96 V2.x / 01V96i"
+  - type: input
+    id: device
+    attributes:
+      label: Aparelho e navegador
+      placeholder: "iPad Safari 17, Android Chrome, Windows Edge…"
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: Conteúdo de app/logs/*.err.log e do console do navegador, se houver.
+      render: text

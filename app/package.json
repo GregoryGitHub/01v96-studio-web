@@ -1,0 +1,17 @@
+{
+  "name": "01v96-web-mixer",
+  "version": "1.0.0",
+  "description": "Interface web local para a Yamaha 01V96",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "@julusian/midi": "^3.8.1",
+    "ws": "^8.22.1"
+  }
+}

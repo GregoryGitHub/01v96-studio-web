@@ -1,0 +1,19 @@
+# Dependencies and runtime output
+node_modules/
+app/logs/
+*.log
+
+# Proprietary reference software used for reverse engineering.
+# Never commit Yamaha / AirFader binaries: each contributor uses their own licensed copy.
+ref - */
+ref/
+*.exe
+*.dll
+*.snap
+
+# Local tooling / editor state
+.claude/
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
