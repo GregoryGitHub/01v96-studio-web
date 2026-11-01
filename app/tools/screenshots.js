@@ -19,7 +19,9 @@ const SHOTS = [
   { name: 'channel', w: 1440, h: 1100, ui: { view: 'channel', strip: 'in0' } },
   { name: 'effects', w: 1440, h: 760, ui: { view: 'effects', fx: 0 } },
   { name: 'mobile', w: 390, h: 844, mobile: true, ui: { view: 'mixer', layer: 'l1', sendsOnFader: 0 } },
-  { name: 'tablet', w: 1180, h: 820, mobile: true, ui: { view: 'channel', strip: 'in0' } },
+  { name: 'tablet', w: 1180, h: 820, mobile: true, ui: { view: 'channel', strip: 'in0', chTab: 'eq' } },
+  { name: 'tablet-mixer', w: 1180, h: 820, mobile: true, ui: { view: 'mixer', layer: 'l1', sendsOnFader: null } },
+  { name: 'scenes', w: 1180, h: 820, mobile: true, ui: { view: 'scenes' } },
 ];
 
 const getJson = url => new Promise((res, rej) => http.get(url, r => { let d = ''; r.on('data', c => (d += c)); r.on('end', () => res(JSON.parse(d))); }).on('error', rej));

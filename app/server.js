@@ -43,6 +43,18 @@ const TYPES = {
 
 const mixer = new Console01V96({ portMatch: process.env.MIDI_PORT ? new RegExp(process.env.MIDI_PORT, 'i') : undefined });
 
+// Settings and UI data shared by every device (fader lock, graphic EQ curves…),
+// kept in a local JSON file next to the server.
+const USERDATA = process.env.USERDATA || path.join(__dirname, 'userdata.json');
+const userdata = (() => { try { return JSON.parse(fs.readFileSync(USERDATA, 'utf8')); } catch { return {}; } })();
+userdata.meta ||= {};
+let saveTimer = null;
+const saveUserdata = () => {
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(() => fs.writeFile(USERDATA, JSON.stringify(userdata, null, 1), err => err && console.error('[userdata]', err.message)), 500);
+};
+mixer.setFaderLock(!!userdata.faderLock);
+
 const server = http.createServer((req, res) => {
   const url = decodeURIComponent(req.url.split('?')[0]);
   // Liveness probe for the desktop launcher and the PWA.
@@ -91,13 +103,17 @@ mixer.on('meter', (type, levels) => broadcast({ t: 'm', type, levels }));
 mixer.on('status', s => broadcast({ t: 'status', ...s }));
 mixer.on('scene', (n, title) => broadcast({ t: 'scene', n, title }));
 mixer.on('error', err => console.error('[midi]', err.message));
+mixer.on('raw', bytes => {
+  const hex = Buffer.from(bytes).toString('hex');
+  for (const c of clients) if (c.sniff && c.readyState === 1) c.send(JSON.stringify({ t: 'raw', hex }));
+});
 setInterval(() => { if (mixer.sync.running) broadcast({ t: 'status', ...mixer.status() }); }, 1000);
 // Heartbeat so clients can tell a dead connection from a quiet one.
 setInterval(() => broadcast({ t: 'ping' }), 3000);
 
 wss.on('connection', ws => {
   clients.add(ws);
-  ws.send(JSON.stringify({ t: 'hello', state: Object.fromEntries(mixer.state), ...mixer.status() }));
+  ws.send(JSON.stringify({ t: 'hello', state: Object.fromEntries(mixer.state), meta: userdata.meta, ...mixer.status() }));
   ws.on('message', raw => {
     let m;
     try { m = JSON.parse(raw); } catch { return; }
@@ -115,6 +131,20 @@ wss.on('connection', ws => {
       case 'store': if (Number.isInteger(m.n)) mixer.storeScene(m.n, m.title); break;
       case 'sceneTitle': if (Number.isInteger(m.n)) mixer.setSceneTitle(m.n, m.title || ''); break;
       case 'select': if (Number.isInteger(m.c)) mixer.selectChannel(m.c); break;
+      case 'faderLock':
+        userdata.faderLock = !!m.on; saveUserdata();
+        mixer.setFaderLock(userdata.faderLock);
+        break;
+      case 'meta':
+        if (typeof m.k === 'string' && m.k.length < 100 && JSON.stringify(m.v ?? null).length < 20000) {
+          if (m.v == null) delete userdata.meta[m.k]; else userdata.meta[m.k] = m.v;
+          saveUserdata();
+          broadcast({ t: 'meta', k: m.k, v: m.v ?? null }, ws);
+        }
+        break;
+      // Protocol debugging: read-only raw requests and a feed of unparsed frames.
+      case 'sniff': ws.sniff = !!m.on; break;
+      case 'rawRequest': ws.send(JSON.stringify({ t: 'rawSent', ok: mixer.rawRequest(m.bytes) })); break;
     }
   });
   ws.on('close', () => clients.delete(ws));

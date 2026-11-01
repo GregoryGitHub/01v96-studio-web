@@ -1,8 +1,10 @@
-// Selected-channel editor: EQ (with response graph), dynamics, sends, routing.
-import { h, fader, knob, toggle, select, bind, drag } from '../controls.js';
+// Selected-channel editor, tablet first: the channel strip stays on the left and
+// the processing lives in tabs (EQ, dynamics, sends, routing, more).
+import { h, fader, knob, toggle, select, bind, drag, sheet } from '../controls.js';
 import * as F from '../format.js';
 import * as S from '../store.js';
-import { allStrips, stripById, strips, k, name } from '../model.js';
+import * as E from '../eq.js';
+import { allStrips, stripById, strips, k, name, setName } from '../model.js';
 
 const card = (title, ...kids) => h('div', { class: 'card' }, h('h3', {}, title), ...kids);
 const row = (...kids) => h('div', { class: 'row' }, ...kids);
@@ -13,12 +15,19 @@ export function channelView(ui) {
   const nav = d => ui.go({ strip: allStrips[(idx + d + allStrips.length) % allStrips.length].id });
   if (s.kind === 'in' && ui.followSel) S.send({ t: 'select', c: s.c });
 
+  const title = h('button', { class: 'chname', title: 'Renomear' }, name(s));
+  title.addEventListener('click', async () => {
+    const r = await sheet({ title: `Nome de ${s.label}`, text: 'Até 4 caracteres (o visor da mesa só mostra 4).', input: { value: name(s), max: 4 },
+      actions: [{ label: 'Cancelar', value: false }, { label: 'Salvar', value: true, className: 'primary' }] });
+    if (r && r.value) { setName(s, r.text); title.textContent = name(s); }
+  });
+
   const head = h('div', { class: 'chhead' },
-    h('button', { class: 'ghost', onclick: () => nav(-1) }, '‹'),
-    h('div', { class: 'chtitle' }, h('span', { class: 'stag ' + s.kind }, s.label), h('b', {}, name(s))),
-    h('button', { class: 'ghost', onclick: () => nav(1) }, '›'),
+    h('button', { class: 'navbtn', 'aria-label': 'Canal anterior', onclick: () => nav(-1) }, '‹'),
+    h('div', { class: 'chtitle' }, h('span', { class: 'stag ' + s.kind }, s.label), title),
+    h('button', { class: 'navbtn', 'aria-label': 'Próximo canal', onclick: () => nav(1) }, '›'),
     h('div', { class: 'grow' }),
-    toggle(k.on(s), 'ON', { className: 'onbtn' }),
+    toggle(k.on(s), 'ON', { className: 'onbtn big' }),
   );
 
   const side = h('div', { class: 'chside' },
@@ -27,144 +36,224 @@ export function channelView(ui) {
     fader(k.fader(s), { home: F.ZERO_DB, format: F.faderDb, className: s.kind }),
   );
 
-  const cards = [eqCard(s)];
-  if (s.kind === 'in') cards.push(gateCard(s));
-  cards.push(compCard(s));
-  if (s.kind === 'in') cards.push(sendsCard(s), routingCard(s));
-  if (s.kind === 'bus') cards.push(busToStCard(s));
-  cards.push(delayCard(s), miscCard(s));
+  const tabs = [['eq', 'EQ', () => eqPanel(s, ui)], ['dyn', 'Dinâmica', () => dynPanel(s)]];
+  if (s.kind === 'in') tabs.push(['sends', 'Envios', () => sendsCard(s)], ['route', 'Rotas', () => routingCard(s)]);
+  if (s.kind === 'bus') tabs.push(['route', 'Stereo', () => busToStCard(s)]);
+  tabs.push(['more', 'Mais', () => h('div', { class: 'cards' }, delayCard(s), miscCard(s))]);
+  const tab = tabs.find(t => t[0] === ui.chTab) || tabs[0];
 
-  return h('section', { class: 'view channel' }, head, h('div', { class: 'chbody' }, side, h('div', { class: 'cards' }, cards)));
+  const tabBar = h('div', { class: 'seg tabs' }, tabs.map(([id, label]) =>
+    h('button', { class: id === tab[0] ? 'on' : '', onclick: () => ui.go({ chTab: id }) }, label)));
+
+  return h('section', { class: 'view channel' }, head,
+    h('div', { class: 'chbody' }, side, h('div', { class: 'chmain' }, tabBar, h('div', { class: 'tabpanel' }, tab[2]()))));
 }
 
-// --- EQ -------------------------------------------------------------------
+// --- EQ ------------------------------------------------------------------------
 
-const BANDS = [
-  { name: 'LOW', q: 1, f: 2, g: 3, qmax: 41 },
-  { name: 'L-MID', q: 5, f: 6, g: 7, qmax: 40 },
-  { name: 'H-MID', q: 8, f: 9, g: 10, qmax: 40 },
-  { name: 'HIGH', q: 11, f: 12, g: 13, qmax: 42 },
-];
+const eqKeys = s => Array.from({ length: 16 }, (_, p) => k.eq(s, p));
+const eqValues = s => eqKeys(s).map(x => S.get(x));
 
-function eqCard(s) {
-  const graph = eqGraph(s);
-  const bands = BANDS.map((b, i) => h('div', { class: 'band' },
-    h('div', { class: 'bname' }, b.name),
-    knob(k.eq(s, b.g), { min: -180, max: 180, home: 0, label: 'GAIN', format: v => F.tenths(v) }),
-    knob(k.eq(s, b.f), { min: 5, max: 124, home: [36, 72, 96, 112][i], label: 'FREQ', format: F.eqFreq }),
-    knob(k.eq(s, b.q), { min: 0, max: b.qmax, home: 23, label: 'Q', format: F.eqQ }),
-    i === 0 ? toggle(k.eq(s, 4), 'HPF') : i === 3 ? toggle(k.eq(s, 14), 'LPF') : null,
-  ));
-  return h('div', { class: 'card eq wide' },
-    h('h3', {}, 'EQ', h('span', { class: 'grow' }), select(k.eq(s, 0), ['TYPE I', 'TYPE II']), toggle(k.eq(s, 15), 'EQ ON', { className: 'onbtn' })),
-    graph, h('div', { class: 'bands' }, bands));
+function eqPanel(s, ui) {
+  const mode = S.getMeta('eqmode:' + s.id, 'param');
+  const modeBar = h('div', { class: 'seg' },
+    h('button', { class: mode === 'graphic' ? 'on' : '', onclick: () => setMode('graphic') }, 'Gráfico'),
+    h('button', { class: mode === 'param' ? 'on' : '', onclick: () => setMode('param') }, 'Paramétrico'));
+  async function setMode(m) {
+    if (m === mode) return;
+    if (m === 'graphic') {
+      // Start the bars from the current curve so nothing jumps.
+      const fl = E.filters(eqValues(s));
+      S.setMeta('geq:' + s.id, E.GEQ_FREQS.map(f => Math.round(Math.max(-E.GEQ_RANGE, Math.min(E.GEQ_RANGE, E.response(fl, f))) * 2) / 2));
+    }
+    S.setMeta('eqmode:' + s.id, m);
+    ui.go({});
+  }
+
+  const graph = eqGraph(s, mode);
+  const body = mode === 'graphic' ? graphicEq(s, graph) : paramBands(s);
+  return h('div', { class: 'card wide eq' },
+    h('h3', {}, modeBar, h('span', { class: 'grow' }), select(k.eq(s, E.EQ_MODE), ['TYPE I', 'TYPE II']), toggle(k.eq(s, E.EQ_ON), 'EQ ON', { className: 'onbtn' })),
+    graph, body);
 }
 
-// Graph geometry shared by drawing and dragging (canvas pixel units).
+function paramBands(s) {
+  const keys = eqKeys(s);
+  const lastPeak = JSON.parse(localStorage.getItem('lastPeakQ') || '{}');
+  return h('div', { class: 'bands' }, E.BANDS.map((b, i) => {
+    const typeSeg = b.flag ? h('div', { class: 'seg mini bandtype' }, ['peak', 'shelf', 'filter'].map(t => {
+      const btn = h('button', { onclick: () => {
+        for (const [p, v] of E.typeWrites(b, t, eqValues(s), lastPeak[s.id + b.id] ?? 23)) S.set(keys[p], v);
+      } }, t === 'peak' ? 'PEAK' : t === 'shelf' ? 'SHELF' : b.filter);
+      return btn;
+    })) : h('div', { class: 'bandtype-ph' }, 'PEAK');
+    const gain = knob(keys[b.g], { min: -E.G_MAX, max: E.G_MAX, home: 0, label: 'GAIN', format: v => F.tenths(v) });
+    const freq = knob(keys[b.f], { min: E.F_MIN, max: E.F_MAX, home: [36, 72, 96, 112][i], label: 'FREQ', format: F.eqFreq });
+    const q = knob(keys[b.q], { min: 0, max: E.Q_PEAK_MAX, home: 23, label: 'Q', format: v => (v > E.Q_PEAK_MAX ? '—' : F.eqQ(v)) });
+    const col = h('div', { class: 'band' }, h('div', { class: 'bname' }, b.name), typeSeg, gain, freq, q);
+    const refresh = () => {
+      const v = eqValues(s), t = E.bandType(b, v);
+      if (t === 'peak') { lastPeak[s.id + b.id] = v[b.q]; localStorage.setItem('lastPeakQ', JSON.stringify(lastPeak)); }
+      typeSeg.querySelectorAll?.('button').forEach((btn, j) => btn.classList.toggle('on', ['peak', 'shelf', 'filter'][j] === t));
+      q.classList.toggle('disabled', t !== 'peak');
+      gain.classList.toggle('disabled', t === 'filter');
+    };
+    [b.q, b.g, b.flag].filter(p => p != null).forEach(p => bind(col, keys[p], refresh));
+    return col;
+  }));
+}
+
+function graphicEq(s, graph) {
+  const metaKey = 'geq:' + s.id;
+  const keys = eqKeys(s);
+  let bars = (S.getMeta(metaKey) || E.GEQ_FREQS.map(() => 0)).slice();
+  const info = h('span', { class: 'hint' });
+  let fitTimer = null, saveTimer = null;
+  const apply = () => {
+    graph.setTarget(bars);
+    clearTimeout(fitTimer);
+    fitTimer = setTimeout(() => {
+      const { values, rms } = E.fitGraphic(bars, eqValues(s));
+      for (let p = 1; p <= 14; p++) if (values[p] !== S.get(keys[p])) S.set(keys[p], values[p]);
+      if (!S.get(keys[E.EQ_ON])) S.set(keys[E.EQ_ON], 1);
+      info.textContent = `Aproximação com as 4 bandas da mesa: ±${rms.toFixed(1)} dB`;
+    }, 40);
+    clearTimeout(saveTimer);
+    saveTimer = setTimeout(() => S.setMeta(metaKey, bars), 400);
+  };
+  const cols = E.GEQ_FREQS.map((f, i) => geqBar(i, () => bars[i], v => { bars[i] = v; apply(); }));
+  graph.setTarget(bars);
+  const reset = h('button', { class: 'tog', onclick: () => { bars = bars.map(() => 0); cols.forEach(c => c.refresh()); apply(); } }, 'Zerar');
+  return h('div', { class: 'geq' }, h('div', { class: 'geqbars' }, cols),
+    h('div', { class: 'row' }, reset, info, h('span', { class: 'grow' }),
+      h('span', { class: 'hint' }, 'Arraste as barras. Toque duplo zera a barra. O app converte para as 4 bandas paramétricas da mesa.')));
+}
+
+// One vertical bar slider, ±GEQ_RANGE dB in 0.5 dB steps.
+function geqBar(i, get, set) {
+  const fill = h('div', { class: 'gfill' });
+  const knobEl = h('div', { class: 'gknob' });
+  const track = h('div', { class: 'gtrack' }, h('div', { class: 'gzero' }), fill, knobEl);
+  const val = h('div', { class: 'gval' });
+  const el = h('div', { class: 'gbar' }, val, track, h('div', { class: 'glabel' }, E.GEQ_LABELS[i]));
+  const R = E.GEQ_RANGE;
+  const render = () => {
+    const v = get(), t = (v + R) / (2 * R);
+    knobEl.style.bottom = `calc(${t * 100}% - 10px)`;
+    fill.style.bottom = (Math.min(t, 0.5) * 100) + '%';
+    fill.style.height = (Math.abs(t - 0.5) * 100) + '%';
+    fill.classList.toggle('neg', v < 0);
+    val.textContent = (v > 0 ? '+' : '') + v.toFixed(1);
+  };
+  el.refresh = render;
+  let acc = 0;
+  drag(track, {
+    onStart: e => {
+      const r = track.getBoundingClientRect();
+      // Bars are cheap to set: a touch jumps straight to the finger.
+      acc = Math.max(-R, Math.min(R, ((r.bottom - e.clientY) / r.height) * 2 * R - R));
+      set(Math.round(acc * 2) / 2); render();
+    },
+    onMove: (dx, dy) => {
+      const r = track.getBoundingClientRect();
+      acc = Math.max(-R, Math.min(R, acc + (dy / r.height) * 2 * R));
+      const v = Math.round(acc * 2) / 2;
+      if (v !== get()) { set(v); render(); }
+    },
+    onDoubleTap: () => { set(0); render(); },
+  });
+  render();
+  return el;
+}
+
+// Response graph; in parametric mode the band points can be dragged.
 const eqX = (W, f) => (Math.log10(f / 20) / Math.log10(1000)) * W;
 const eqY = (H, d) => H / 2 - (d / 20) * (H / 2 - 8);
 
-function nearestFreqIndex(hz) {
-  let best = 5, err = Infinity;
-  for (let i = 5; i <= 124; i++) { const e = Math.abs(Math.log(F.eqFreqHz(i) / hz)); if (e < err) { err = e; best = i; } }
-  return best;
-}
-
-function eqGraph(s) {
+function eqGraph(s, mode) {
   const cv = h('canvas', { class: 'eqgraph', width: 800, height: 220 });
-  const keys = Array.from({ length: 16 }, (_, p) => k.eq(s, p));
-  let selected = -1;
-  const draw = () => drawEq(cv, keys.map(x => S.get(x)), selected);
+  const keys = eqKeys(s);
+  let selected = -1, target = null;
+  const draw = () => drawEq(cv, eqValues(s), selected, target);
   keys.forEach(x => bind(cv, x, () => requestAnimationFrame(draw)));
   new ResizeObserver(() => { cv.width = cv.clientWidth * devicePixelRatio; cv.height = cv.clientHeight * devicePixelRatio; draw(); }).observe(cv);
 
-  // Drag a band point: horizontal = frequency, vertical = gain.
-  const toCanvas = e => { const r = cv.getBoundingClientRect(); return [(e.clientX - r.left) * cv.width / r.width, (e.clientY - r.top) * cv.height / r.height]; };
-  let px = 0, py = 0;
-  drag(cv, {
-    onStart: e => {
-      const [x, y] = toCanvas(e);
-      const v = keys.map(x => S.get(x));
-      const reach = (e.pointerType === 'touch' ? 44 : 24) * devicePixelRatio;
-      let best = -1, bd = Infinity;
-      BANDS.forEach((b, i) => {
-        const d = Math.hypot(eqX(cv.width, F.eqFreqHz(v[b.f])) - x, eqY(cv.height, Math.max(-20, Math.min(20, v[b.g] / 10))) - y);
-        if (d < bd) { bd = d; best = i; }
-      });
-      selected = bd <= reach ? best : -1;
-      [px, py] = [x, y];
-      draw();
-    },
-    onMove: (dx, dy, e) => {
-      if (selected < 0) return;
-      const b = BANDS[selected];
-      const [x, y] = toCanvas(e);
-      px = Math.max(0, Math.min(cv.width, x)); py = Math.max(0, Math.min(cv.height, y));
-      S.set(keys[b.f], nearestFreqIndex(20 * Math.pow(1000, px / cv.width)));
-      const filterOn = (selected === 0 && S.get(keys[4])) || (selected === 3 && S.get(keys[14]));
-      if (!filterOn) S.set(keys[b.g], Math.max(-180, Math.min(180, Math.round(((cv.height / 2 - py) / (cv.height / 2 - 8)) * 200))));
-    },
-    onEnd: () => { selected = -1; draw(); },
-  });
-  return h('div', { class: 'eqwrap' }, cv, h('div', { class: 'hint' }, 'Arraste os pontos coloridos: horizontal = frequência, vertical = ganho.'));
+  if (mode === 'param') {
+    const toCanvas = e => { const r = cv.getBoundingClientRect(); return [(e.clientX - r.left) * cv.width / r.width, (e.clientY - r.top) * cv.height / r.height]; };
+    drag(cv, {
+      onStart: e => {
+        const [x, y] = toCanvas(e);
+        const v = eqValues(s);
+        const reach = (e.pointerType === 'touch' ? 44 : 24) * devicePixelRatio;
+        let best = -1, bd = Infinity;
+        E.BANDS.forEach((b, i) => {
+          const d = Math.hypot(eqX(cv.width, F.eqFreqHz(v[b.f])) - x, eqY(cv.height, Math.max(-20, Math.min(20, v[b.g] / 10))) - y);
+          if (d < bd) { bd = d; best = i; }
+        });
+        selected = bd <= reach ? best : -1;
+        draw();
+      },
+      onMove: (dx, dy, e) => {
+        if (selected < 0) return;
+        const b = E.BANDS[selected];
+        const [x, y] = toCanvas(e);
+        const px = Math.max(0, Math.min(cv.width, x)), py = Math.max(0, Math.min(cv.height, y));
+        S.set(keys[b.f], E.freqIndex(20 * Math.pow(1000, px / cv.width)));
+        if (E.bandType(b, eqValues(s)) !== 'filter') S.set(keys[b.g], Math.max(-E.G_MAX, Math.min(E.G_MAX, Math.round(((cv.height / 2 - py) / (cv.height / 2 - 8)) * 200))));
+      },
+      onEnd: () => { selected = -1; draw(); },
+    });
+  }
+  const wrap = h('div', { class: 'eqwrap' }, cv, mode === 'param' ? h('div', { class: 'hint' }, 'Arraste os pontos coloridos: horizontal = frequência, vertical = ganho. Toque num botão giratório para ajuste fino.') : null);
+  wrap.setTarget = t => { target = t; requestAnimationFrame(draw); };
+  return wrap;
 }
 
-// RBJ cookbook magnitude responses, evaluated at 48 kHz.
-function biquadDb(type, f0, gainDb, Q, f) {
-  const fs = 48000, A = Math.pow(10, gainDb / 40), w0 = 2 * Math.PI * f0 / fs, cw = Math.cos(w0), sw = Math.sin(w0);
-  const alpha = sw / (2 * Q);
-  let b0, b1, b2, a0, a1, a2;
-  if (type === 'peak') { b0 = 1 + alpha * A; b1 = -2 * cw; b2 = 1 - alpha * A; a0 = 1 + alpha / A; a1 = -2 * cw; a2 = 1 - alpha / A; }
-  else if (type === 'lowshelf' || type === 'highshelf') {
-    const sq = 2 * Math.sqrt(A) * (sw / (2 * 0.707));
-    const sgn = type === 'lowshelf' ? 1 : -1;
-    b0 = A * ((A + 1) - sgn * (A - 1) * cw + sq); b1 = sgn * 2 * A * ((A - 1) - sgn * (A + 1) * cw); b2 = A * ((A + 1) - sgn * (A - 1) * cw - sq);
-    a0 = (A + 1) + sgn * (A - 1) * cw + sq; a1 = -sgn * 2 * ((A - 1) + sgn * (A + 1) * cw); a2 = (A + 1) + sgn * (A - 1) * cw - sq;
-  } else if (type === 'hpf') { const a = sw / (2 * 0.707); b0 = (1 + cw) / 2; b1 = -(1 + cw); b2 = b0; a0 = 1 + a; a1 = -2 * cw; a2 = 1 - a; }
-  else { const a = sw / (2 * 0.707); b0 = (1 - cw) / 2; b1 = 1 - cw; b2 = b0; a0 = 1 + a; a1 = -2 * cw; a2 = 1 - a; }
-  const w = 2 * Math.PI * f / fs, c1 = Math.cos(w), c2 = Math.cos(2 * w), s1 = Math.sin(w), s2 = Math.sin(2 * w);
-  const nr = b0 + b1 * c1 + b2 * c2, ni = -(b1 * s1 + b2 * s2), dr = a0 + a1 * c1 + a2 * c2, di = -(a1 * s1 + a2 * s2);
-  return 10 * Math.log10((nr * nr + ni * ni) / (dr * dr + di * di));
-}
-
-function drawEq(cv, v, selected = -1) {
+function drawEq(cv, v, selected = -1, target = null) {
   const ctx = cv.getContext('2d'), W = cv.width, H = cv.height, css = getComputedStyle(cv);
+  const dpr = devicePixelRatio;
   ctx.clearRect(0, 0, W, H);
-  const fx = f => eqX(W, f);
-  const gy = d => eqY(H, d);
+  const fx = f => eqX(W, f), gy = d => eqY(H, d);
   ctx.strokeStyle = css.getPropertyValue('--grid'); ctx.lineWidth = 1;
-  for (const f of [50, 100, 200, 500, 1000, 2000, 5000, 10000]) { ctx.beginPath(); ctx.moveTo(fx(f), 0); ctx.lineTo(fx(f), H); ctx.stroke(); }
-  for (const d of [-12, -6, 0, 6, 12]) { ctx.beginPath(); ctx.moveTo(0, gy(d)); ctx.lineTo(W, gy(d)); ctx.stroke(); }
-  const on = v[15] === 1;
-  const filters = BANDS.map((b, i) => {
-    const f0 = F.eqFreqHz(v[b.f]), g = v[b.g] / 10, qs = F.T.qMap[v[b.q]];
-    if (i === 0 && v[4]) return ['hpf', f0, 0, 0.7];
-    if (i === 3 && v[14]) return ['lpf', f0, 0, 0.7];
-    if (qs === 'Lo') return ['lowshelf', f0, g, 0.7];
-    if (qs === 'Hi') return ['highshelf', f0, g, 0.7];
-    return ['peak', f0, g, F.eqQValue(v[b.q]) || 1];
-  });
-  ctx.lineWidth = 2 * devicePixelRatio;
+  ctx.fillStyle = css.getPropertyValue('--muted'); ctx.font = `${10 * dpr}px system-ui`;
+  for (const [f, l] of [[50, '50'], [100, '100'], [200, '200'], [500, '500'], [1000, '1k'], [2000, '2k'], [5000, '5k'], [10000, '10k']]) {
+    ctx.beginPath(); ctx.moveTo(fx(f), 0); ctx.lineTo(fx(f), H); ctx.stroke(); ctx.fillText(l, fx(f) + 3 * dpr, H - 4 * dpr);
+  }
+  for (const d of [-12, -6, 0, 6, 12]) { ctx.beginPath(); ctx.moveTo(0, gy(d)); ctx.lineTo(W, gy(d)); ctx.stroke(); ctx.fillText((d > 0 ? '+' : '') + d, 3 * dpr, gy(d) - 3 * dpr); }
+  const on = v[E.EQ_ON] === 1;
+  const fl = E.filters(v);
+  if (target) {
+    ctx.fillStyle = css.getPropertyValue('--c-aux');
+    E.GEQ_FREQS.forEach((f, i) => { ctx.globalAlpha = 0.85; ctx.fillRect(fx(f) - 3 * dpr, gy(target[i]) - 3 * dpr, 6 * dpr, 6 * dpr); });
+    ctx.globalAlpha = 1;
+  }
+  ctx.lineWidth = 2.5 * dpr;
   ctx.strokeStyle = on ? css.getPropertyValue('--accent') : css.getPropertyValue('--muted');
   ctx.fillStyle = on ? css.getPropertyValue('--accent-soft') : 'transparent';
   ctx.beginPath();
   for (let x = 0; x <= W; x += 2) {
     const f = 20 * Math.pow(1000, x / W);
-    const d = on ? filters.reduce((a, [t, f0, g, q]) => a + biquadDb(t, f0, g, q, f), 0) : 0;
+    const d = on ? E.response(fl, f) : 0;
     const y = gy(Math.max(-24, Math.min(24, d)));
     x === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
   }
   ctx.stroke();
   ctx.lineTo(W, gy(0)); ctx.lineTo(0, gy(0)); ctx.closePath(); ctx.globalAlpha = 0.25; ctx.fill(); ctx.globalAlpha = 1;
-  BANDS.forEach((b, i) => {
-    const x = fx(F.eqFreqHz(v[b.f])), y = gy(Math.max(-20, Math.min(20, v[b.g] / 10)));
+  if (target) return;
+  E.BANDS.forEach((b, i) => {
+    const t = E.bandType(b, v);
+    const x = fx(F.eqFreqHz(v[b.f])), y = t === 'filter' ? gy(0) : gy(Math.max(-20, Math.min(20, v[b.g] / 10)));
     ctx.fillStyle = css.getPropertyValue(`--band${i}`);
-    if (i === selected) { ctx.globalAlpha = 0.25; ctx.beginPath(); ctx.arc(x, y, 18 * devicePixelRatio, 0, 2 * Math.PI); ctx.fill(); ctx.globalAlpha = 1; }
-    ctx.beginPath(); ctx.arc(x, y, (i === selected ? 9 : 7) * devicePixelRatio, 0, 2 * Math.PI); ctx.fill();
+    if (i === selected) { ctx.globalAlpha = 0.25; ctx.beginPath(); ctx.arc(x, y, 20 * dpr, 0, 2 * Math.PI); ctx.fill(); ctx.globalAlpha = 1; }
+    ctx.beginPath(); ctx.arc(x, y, (i === selected ? 10 : 8) * dpr, 0, 2 * Math.PI); ctx.fill();
   });
 }
 
 // --- Dynamics ----------------------------------------------------------------
+
+function dynPanel(s) {
+  return h('div', { class: 'cards' }, s.kind === 'in' ? gateCard(s) : null, compCard(s));
+}
 
 function gateCard(s) {
   return card('GATE',
@@ -203,7 +292,7 @@ function sendsCard(s) {
     hslider(k.send(s, n), { max: 1023, home: F.ZERO_DB, format: F.faderDb }),
     n % 2 === 0 ? knob(k.sendPan(s, n >> 1), { min: -63, max: 63, home: 0, label: '', format: F.pan, size: 'xs' }) : h('span'),
   ));
-  return h('div', { class: 'card wide' }, h('h3', {}, 'AUX SENDS'), h('div', { class: 'sends' }, rows));
+  return h('div', { class: 'card wide' }, h('h3', {}, 'ENVIOS AUX'), h('div', { class: 'sends' }, rows));
 }
 
 function hslider(key, { max, home, format }) {
@@ -216,18 +305,18 @@ function hslider(key, { max, home, format }) {
 }
 
 function routingCard(s) {
-  return card('ROUTING',
+  return h('div', { class: 'cards' }, card('ROTEAMENTO',
     row(toggle(k.routing(s, 0), 'STEREO'), toggle(k.routing(s, 2), 'DIRECT'), toggle(k.routing(s, 1), 'PAN LINK')),
-    row(...Array.from({ length: 8 }, (_, i) => toggle(k.routing(s, 3 + i), String(i + 1), { className: 'sq' }))),
     h('div', { class: 'hint' }, 'BUS 1–8'),
-  );
+    row(...Array.from({ length: 8 }, (_, i) => toggle(k.routing(s, 3 + i), String(i + 1), { className: 'sq' }))),
+  ));
 }
 
 function busToStCard(s) {
-  return card('TO STEREO',
+  return h('div', { class: 'cards' }, card('PARA O STEREO',
     row(toggle(k.busToSt(s, 0), 'ON', { className: 'onbtn' }),
       knob(k.busToSt(s, 2), { min: -63, max: 63, home: 0, label: 'PAN', format: F.pan })),
-    hslider(k.busToSt(s, 1), { max: 1023, home: F.ZERO_DB, format: F.faderDb }));
+    hslider(k.busToSt(s, 1), { max: 1023, home: F.ZERO_DB, format: F.faderDb })));
 }
 
 function delayCard(s) {

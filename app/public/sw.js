@@ -1,10 +1,10 @@
 // Service worker: keeps the app shell available when the local server is down,
 // so the page can open and report "servidor offline" instead of a browser error.
 // Network first (so updates show up immediately), cache as fallback.
-const CACHE = '01v96-shell-v2';
+const CACHE = '01v96-shell-v3';
 const SHELL = [
   '/', '/index.html', '/manifest.webmanifest', '/css/app.css',
-  '/js/main.js', '/js/store.js', '/js/controls.js', '/js/format.js', '/js/model.js',
+  '/js/main.js', '/js/store.js', '/js/controls.js', '/js/format.js', '/js/model.js', '/js/eq.js',
   '/js/views/mixer.js', '/js/views/channel.js', '/js/views/effects.js', '/js/views/scenes.js',
   '/data/tables.json', '/data/effects.json', '/data/elements.json',
   '/icons/icon-192.png', '/icons/icon-512.png', '/icons/favicon-32.png',

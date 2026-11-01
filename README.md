@@ -26,9 +26,11 @@ Sem Studio Manager e sem drivers estranhos: um servidor Node.js local fala com a
 |---|---|
 | 🎚️ **Mixer** | 32 canais, 8 ST IN, AUX 1–8, BUS 1–8 e STEREO, com fader, ON, pan, CUE, nomes e medidores ao vivo |
 | 🔁 **Sends on fader** | Transforma os faders em envios para qualquer AUX (monitor, fones, retorno de palco) |
-| 🎛️ **Canal (SEL)** | EQ de 4 bandas com gráfico arrastável, HPF/LPF, gate, compressor, 8 envios AUX, roteamento, delay, phase, insert, pair e grupos |
+| 🎛️ **Canal (SEL)** | Abas EQ, Dinâmica, Envios, Rotas e Mais: EQ de 4 bandas com gráfico arrastável e tipo por banda (PEAK/SHELF/HPF-LPF), gate, compressor, 8 envios AUX, roteamento, delay, phase, insert, pair e grupos |
+| 📊 **EQ gráfico** | 10 barras (31 Hz–16 kHz) convertidas automaticamente para as 4 bandas paramétricas da mesa |
+| 🔒 **Faders da mesa travados** | Um botão no topo ignora os faders físicos (faders sujos com ruído): o nível passa a ser controlado só pelo app |
 | ✺ **Efeitos 1–4** | Os **61 tipos** de efeito da mesa (REV-X, delays, chorus, amp sim, comp 276/260, EQ601…) com todos os parâmetros, nas unidades da mesa |
-| ☰ **Cenas** | Títulos, recall e store |
+| ☰ **Cenas** | Cartões com nome, cena atual em destaque, ◀ ▶ no topo para trocar, gravar e renomear |
 | 👆 **Touch** | Faders e knobs para dedos, toque duplo volta ao padrão, EQ arrastável, vários dedos ao mesmo tempo |
 | 📲 **PWA** | Instalável, abre mesmo com o servidor desligado e avisa claramente quando está offline |
 | 🔄 **Tempo real** | O que você mexe na mesa aparece no navegador, e vice-versa, em todos os aparelhos conectados |

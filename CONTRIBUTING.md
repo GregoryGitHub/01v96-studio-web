@@ -28,7 +28,8 @@ Não há etapa de build: o front-end é JavaScript puro com ES modules. Edite e 
 
 | Script | O que faz |
 |---|---|
-| `touch-test.js` | Arrasta faders, knobs e o gráfico de EQ com toques reais num Edge/Chrome headless (celular e tablet). Rode contra o sandbox. |
+| `touch-test.js` | Arrasta faders, knobs, o gráfico de EQ e as barras do EQ gráfico com toques reais num Edge/Chrome headless (celular e tablet). Rode contra o sandbox, com `USERDATA` apontando para um arquivo temporário. |
+| `sniff.js` | Envia pedidos de leitura pela conexão do servidor e mostra os quadros SysEx não reconhecidos. Use para investigar o protocolo. |
 | `screenshots.js` | Gera as imagens do README a partir de um servidor rodando. |
 | `pwa-check.js` | Confere service worker, instalabilidade e modo offline. |
 | `make-icons.js` | Gera os ícones PNG/ICO sem dependências. |

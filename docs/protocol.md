@@ -73,6 +73,35 @@ A tabela do Studio Manager fica em `.data:0x102ED150` (elemento 0 = `kInputPhase
   - Valores maiores que `0x3FFF` ocupam **dois slots** de 14 bits (alto, baixo). Por isso "DELAY" aparece duas vezes.
 - Os enums e formatadores vêm do switch em `FUN_100be6b0` (id da curva → tabela de strings de 7 bytes ou função de formatação).
 
+## Tipo das bandas LOW e HIGH do EQ
+
+O Studio Manager e o AirFader usam a mesma tabela de exibição do Q (`0x1023DBB8` / `qMap`): 0–40 = 10,0…0,10, 41 = L.SHELF, 42 = H.SHELF, 43 = LPF, 44 = HPF. Na 01V96, o tipo das bandas extremas combina o Q com um flag separado (`kEQHPFOn` = param 4 na LOW, `kEQLPFOn` = param 14 na HIGH):
+
+| Banda | Q | Flag | Tipo |
+|---|---|---|---|
+| LOW | 0–40 | — | peaking |
+| LOW | 41 | 1 | low shelf |
+| LOW | 41 | 0 | HPF |
+| HIGH | 0–40 | — | peaking |
+| HIGH | 42 | 1 | high shelf |
+| HIGH | 42 | 0 | LPF |
+
+Evidência: na mesa real, 36 de 40 canais estão com o EQ de fábrica (LOW 125 Hz Q41, HIGH 10 kHz Q42) e flag = 1. Se o flag 1 fosse "filtro ligado", todo canal de fábrica teria LPF em 10 kHz. Os dois canais com flag 0 são um par estéreo ajustado à mão. **Ainda falta confirmar no visor da mesa** (abra um canal com flag 0 e veja se aparece HPF/LPF).
+
+## Cenas
+
+- Títulos: o pedido `F0 43 3n 3E 7F 10 40 hi lo F7` responde `… 10 40 hi lo <16 chars> F7`. Memórias vazias respondem `[   No Data!   ]`.
+- Cena atual: grupo 4, elemento `0A`.
+- Recall `… 7F 10 00 hi lo 02 00`, store `… 7F 10 20 hi lo 02 00` e título `… 7F 10 40 hi lo <16 chars>`, todos no formato do AirFader. O título só aceita ASCII; o app remove os acentos.
+
+## Faders físicos com ruído
+
+Faders sujos fazem a mesa transmitir mudanças contínuas de ±5–25 passos. Com a trava ligada, o servidor ignora as mudanças de fader (`kInputFader`, `kAUXFader`, `kBusFader`, `kStereoFader`) vindas da superfície. Se a diferença passa de 3 passos, ele reenvia o valor do app, no máximo a cada 250 ms por fader. Os demais parâmetros vindos da mesa continuam valendo.
+
+## Depuração
+
+Com o servidor rodando, `node app/tools/sniff.js "F0 43 30 3E … F7"` envia pedidos de leitura pela mesma conexão MIDI (abrir uma segunda conexão trava no Windows) e imprime os quadros que o servidor não reconhece. Mensagens de escrita (`1n`) são recusadas.
+
 ## Outros
 
 - **Medidores:** `F0 43 3n 3E 0D 21 <tipo> 00 00 00 01 F7`, onde tipo 0 = entradas, 1 = bus, 2 = aux, 4 = stereo, e `7F` para parar. A resposta tem palavras de 14 bits: entradas com 6 por canal, saídas com 4. Escala: `(v − 37) × 0,03117` → 0…127.

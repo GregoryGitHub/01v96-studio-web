@@ -27,6 +27,13 @@ function apply(k, v) {
   if (s) for (const fn of s) fn(v);
 }
 
+// UI-only value (text, flags): stored and broadcast to subscribers, never sent.
+export function setLocal(k, v) { if (state.get(k) !== v) apply(k, v); }
+
+// Shared UI data persisted by the server and synced to every device.
+export function setMeta(k, v) { apply('meta:' + k, v); send({ t: 'meta', k, v }); }
+export const getMeta = (k, d) => (state.has('meta:' + k) ? state.get('meta:' + k) : d);
+
 // Local update + coalesced send (one frame per animation frame per key).
 export function set(k, v) {
   v = Math.round(v);
@@ -67,12 +74,18 @@ export function connect() {
     const m = JSON.parse(ev.data);
     if (m.t === 'hello') {
       for (const [k, v] of Object.entries(m.state)) apply(k, v);
+      for (const [k, v] of Object.entries(m.meta || {})) apply('meta:' + k, v);
       Object.assign(status, { connected: m.connected, port: m.port, sync: m.sync });
     } else if (m.t === 'p') {
       for (const [k, v] of m.a) apply(k, v);
     } else if (m.t === 'status') {
       Object.assign(status, { connected: m.connected, port: m.port, sync: m.sync });
+    } else if (m.t === 'scene') {
+      setLocal('scene:' + m.n, m.title);
+    } else if (m.t === 'meta') {
+      setLocal('meta:' + m.k, m.v);
     }
+    if (m.faderLock !== undefined) status.faderLock = m.faderLock;
     emit(m);
   };
 }

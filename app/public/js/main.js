@@ -1,10 +1,10 @@
 import { loadData } from './format.js';
 import * as S from './store.js';
-import { h, unbindTree } from './controls.js';
+import { h, unbindTree, sheet } from './controls.js';
 import { mixerView, onMeter } from './views/mixer.js';
 import { channelView } from './views/channel.js';
 import { effectsView } from './views/effects.js';
-import { scenesView } from './views/scenes.js';
+import { scenesView, recallScene, sceneTitle, sceneLabel, SCENE_KEY } from './views/scenes.js';
 
 const VIEWS = { mixer: mixerView, channel: channelView, effects: effectsView, scenes: scenesView };
 const NAV = [['mixer', 'Mixer', '▥'], ['channel', 'Canal', '◎'], ['effects', 'Efeitos', '✺'], ['scenes', 'Cenas', '☰']];
@@ -23,14 +23,54 @@ ui.go = patch => {
 const main = h('main');
 const statusEl = h('div', { class: 'status' });
 const nav = h('nav');
-const meterBtn = h('button', { class: 'ghost', title: 'Medidores', onclick: () => { ui.meters = !ui.meters; S.send({ t: 'meters', on: ui.meters }); ui.go({}); } });
+
+// Scene chip: current scene with previous/next (skips empty memories).
+const sceneName = h('span', { class: 'scname' });
+const sceneNum = h('span', { class: 'scnum' });
+const stepScene = d => {
+  const cur = S.get(SCENE_KEY, 1);
+  for (let n = cur + d; n >= 1 && n <= 99; n += d) if (sceneTitle(n) !== null && sceneTitle(n) !== undefined) return recallScene(n);
+};
+const sceneChip = h('div', { class: 'scenechip' },
+  h('button', { class: 'scstep', 'aria-label': 'Cena anterior', onclick: () => stepScene(-1) }, '◀'),
+  h('button', { class: 'sccur', onclick: () => ui.go({ view: 'scenes' }) }, sceneNum, sceneName),
+  h('button', { class: 'scstep', 'aria-label': 'Próxima cena', onclick: () => stepScene(1) }, '▶'));
+const renderScene = () => {
+  const n = S.get(SCENE_KEY, 0);
+  sceneNum.textContent = n ? String(n).padStart(2, '0') : '--';
+  sceneName.textContent = n ? sceneLabel(n) : 'Cena';
+};
+S.on(SCENE_KEY, renderScene);
+
+// Fader lock: the console's physical faders stop changing levels (dirty
+// faders); only the app moves them.
+const lockBtn = h('button', { class: 'lockbtn', onclick: () => S.send({ t: 'faderLock', on: !S.status.faderLock }) });
+const renderLock = () => {
+  const on = !!S.status.faderLock;
+  lockBtn.classList.toggle('on', on);
+  lockBtn.replaceChildren(h('i', {}, on ? '🔒' : '🔓'), h('span', {}, on ? 'Faders da mesa travados' : 'Faders da mesa livres'));
+  lockBtn.title = on
+    ? 'Os faders físicos estão sendo ignorados: o nível é controlado só pelo app (útil com faders sujos). Toque para liberar.'
+    : 'Toque para ignorar os faders físicos da mesa e controlar o nível só pelo app.';
+};
+
+const menuBtn = h('button', { class: 'ghost menu', 'aria-label': 'Menu', onclick: async () => {
+  const c = await sheet({ title: 'Opções', actions: [
+    { label: 'Fechar', value: null },
+    { label: ui.meters ? 'Desligar medidores' : 'Ligar medidores', value: 'meters' },
+    { label: 'Reler tudo da mesa', value: 'resync' },
+    { label: ui.followSel ? 'SEL não muda a mesa' : 'SEL também seleciona na mesa', value: 'follow' },
+  ] });
+  if (c === 'meters') { ui.meters = !ui.meters; S.send({ t: 'meters', on: ui.meters }); ui.go({}); }
+  if (c === 'resync') S.send({ t: 'resync' });
+  if (c === 'follow') ui.go({ followSel: !ui.followSel });
+} }, '⋯');
 
 function render() {
   unbindTree(main);
   main.replaceChildren(VIEWS[ui.view](ui));
   nav.replaceChildren(...NAV.map(([id, label, icon]) =>
     h('button', { class: ui.view === id ? 'on' : '', onclick: () => ui.go({ view: id }) }, h('i', {}, icon), h('span', {}, label))));
-  meterBtn.textContent = ui.meters ? 'Medidores ●' : 'Medidores ○';
 }
 
 // Offline overlay (server unreachable) and banner (server up, console missing).
@@ -70,16 +110,16 @@ S.onMessage(m => {
   if (m.t === 'm') onMeter(m.type, m.levels);
   else if (m.t === 'status' || m.t === 'hello' || m.t === 'link') {
     renderStatus();
-    if (m.t === 'hello') { render(); if (ui.meters) S.send({ t: 'meters', on: true }); }
-  }
+    renderLock();
+    if (m.t === 'hello') { render(); renderScene(); if (ui.meters) S.send({ t: 'meters', on: true }); }
+  } else if (m.t === 'scene') renderScene();
 });
 
 // The server keeps meters running for 10 s after each request.
 setInterval(() => { if (ui.meters && document.visibilityState === 'visible') S.send({ t: 'meters', on: true }); }, 4000);
 
 document.body.append(
-  h('header', {}, h('div', { class: 'brand' }, h('b', {}, '01V96'), ' Web Mixer'), statusEl, h('div', { class: 'grow' }),
-    meterBtn, h('button', { class: 'ghost', title: 'Ler tudo da mesa novamente', onclick: () => S.send({ t: 'resync' }) }, 'Sincronizar')),
+  h('header', {}, h('div', { class: 'brand' }, h('b', {}, '01V96')), statusEl, sceneChip, h('div', { class: 'grow' }), lockBtn, menuBtn),
   banner, main, nav, offline);
 
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(() => {});
@@ -91,4 +131,6 @@ try {
   // Neither the server nor the offline cache had the data: just show the overlay.
 }
 renderStatus();
+renderLock();
+renderScene();
 S.connect();

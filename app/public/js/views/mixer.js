@@ -1,7 +1,7 @@
 // Mixer view: channel strips with layers and sends-on-fader.
 import { h, fader, knob, toggle, meter, bind } from '../controls.js';
 import { faderDb, pan, ZERO_DB } from '../format.js';
-import { strips, k, name, setName, nameKeys } from '../model.js';
+import { strips, k, name, nameKeys } from '../model.js';
 
 export const LAYERS = [
   { id: 'l1', label: '1–16', strips: () => strips.in.slice(0, 16) },
@@ -37,14 +37,9 @@ function strip(s, ui, sof, isMaster = false) {
   const sends = sof != null && s.kind === 'in';
   const fk = sends ? k.send(s, sof) : k.fader(s);
   const ok = sends ? k.sendOn(s, sof) : k.on(s);
-  const label = h('button', { class: 'sname', title: 'Duplo clique para renomear', onclick: () => ui.go({ view: 'channel', strip: s.id }) });
+  const label = h('button', { class: 'sname', title: 'Abrir o canal (renomeie tocando no nome lá)', onclick: () => ui.go({ view: 'channel', strip: s.id }) });
   const renderName = () => { label.textContent = name(s); };
   nameKeys(s).forEach(x => bind(label, x, renderName));
-  label.addEventListener('dblclick', e => {
-    e.stopPropagation();
-    const t = prompt(`Nome de ${s.label} (até 4 caracteres)`, name(s));
-    if (t != null) { setName(s, t); renderName(); }
-  });
 
   const m = meter();
   meters.set(s.meter.join(':'), m);

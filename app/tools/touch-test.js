@@ -37,7 +37,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
     await touch('touchEnd');
     await sleep(150);
   }
-  const center = sel => js(`(() => { const r = document.querySelector(${JSON.stringify(sel)}).getBoundingClientRect(); return { x: r.x + r.width / 2, y: r.y + r.height / 2, w: r.width, h: r.height }; })()`);
+  const center = sel => js(`(async () => { const el = document.querySelector(${JSON.stringify(sel)}); el.scrollIntoView({ block: 'center' }); await new Promise(r => setTimeout(r, 150)); const r = el.getBoundingClientRect(); return { x: r.x + r.width / 2, y: r.y + r.height / 2, w: r.width, h: r.height }; })()`);
   const text = sel => js(`document.querySelector(${JSON.stringify(sel)})?.textContent`);
   const results = [];
   const check = (name, before, after) => { const ok = before !== after; results.push({ name, ok, before, after }); };
@@ -101,6 +101,48 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
     const ly = g.y - (Math.max(-20, Math.min(20, pt.db)) / 20) * (g.h / 2 - 8);
     await drag(lx, ly, pt.hz > 2000 ? -60 : 60, 20);
     check(`${dev.name}: EQ graph drag`, before, await labels());
+
+    // Single tap on a knob opens the fine-adjust sheet; "+" changes the value.
+    c = await center('.band .knob svg');
+    await touch('touchStart', c.x, c.y); await sleep(40); await touch('touchEnd'); await sleep(700);
+    const opened = await js(`!!document.querySelector('.sheet.fine')`);
+    results.push({ name: `${dev.name}: knob tap opens fine adjust`, ok: opened });
+    if (opened) {
+      before = await text('.sheet.fine .fine-val');
+      const plus = await js(`(() => { const b = [...document.querySelectorAll('.sheet.fine .sheet-btn')].find(x => x.textContent === '+'); const r = b.getBoundingClientRect(); return { x: r.x + r.width / 2, y: r.y + r.height / 2 }; })()`);
+      await touch('touchStart', plus.x, plus.y); await sleep(40); await touch('touchEnd'); await sleep(300);
+      check(`${dev.name}: fine adjust +`, before, await text('.sheet.fine .fine-val'));
+      await js(`document.querySelector('.sheet.fine .sheet-btn.primary').click()`);
+      await sleep(200);
+    }
+
+    // Band type: switch LOW to PEAK enables its Q knob.
+    await js(`[...document.querySelectorAll('.band')[0].querySelectorAll('.bandtype button')].find(b => b.textContent === 'SHELF').click()`);
+    await sleep(200);
+    const qOffShelf = await js(`document.querySelectorAll('.band')[0].querySelectorAll('.knob')[2].classList.contains('disabled')`);
+    await js(`[...document.querySelectorAll('.band')[0].querySelectorAll('.bandtype button')].find(b => b.textContent === 'PEAK').click()`);
+    await sleep(200);
+    const qOnPeak = await js(`!document.querySelectorAll('.band')[0].querySelectorAll('.knob')[2].classList.contains('disabled')`);
+    results.push({ name: `${dev.name}: band type toggles Q`, ok: qOffShelf && qOnPeak });
+
+    // Graphic EQ: switch mode, drag the 2k bar up, the bands must change.
+    await js(`[...document.querySelectorAll('.eq h3 .seg button')].find(b => b.textContent === 'Gráfico').click()`);
+    await sleep(800);
+    const gb = await center('.gbar:nth-child(7) .gtrack');
+    const eqState = () => js(`fetch('/health').then(() => [...document.querySelectorAll('canvas.eqgraph')].length)`);
+    await eqState();
+    const vals = () => js(`(async () => { const s = await import('/js/store.js'); return [1,2,3,5,6,7,8,9,10,11,12,13].map(p => s.get('1:32:' + p + ':0')).join(','); })()`);
+    before = await vals();
+    await drag(gb.x, gb.y, 0, -gb.h * 0.3);
+    await sleep(600);
+    check(`${dev.name}: graphic EQ drives bands`, before, await vals());
+    await js(`[...document.querySelectorAll('.eq h3 .seg button')].find(b => b.textContent === 'Paramétrico').click()`);
+    await sleep(300);
+
+    // Scenes: tapping the scene chip opens the scenes view.
+    await js(`document.querySelector('.sccur').click()`);
+    await sleep(500);
+    results.push({ name: `${dev.name}: scene chip opens scenes`, ok: await js(`!!document.querySelector('.scenesv')`) });
   }
 
   console.log(JSON.stringify(results, null, 1));

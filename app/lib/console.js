@@ -5,9 +5,11 @@
 const { EventEmitter } = require('events');
 const midi = require('@julusian/midi');
 const proto = require('./protocol');
-const { syncPlan } = require('./model');
+const { syncPlan, el } = require('./model');
 
 const key = a => a.join(':');
+// Elements whose param 0 is a physical fader on the surface.
+const FADER_ELEMS = new Set(['kInputFader', 'kAUXFader', 'kBusFader', 'kStereoFader'].map(n => el(n).element));
 
 class Console01V96 extends EventEmitter {
   constructor({ portMatch = /01V96(i)?-1\b/i, device = 0 } = {}) {
@@ -23,6 +25,8 @@ class Console01V96 extends EventEmitter {
     this.queued = new Set();
     this.inflight = new Map(); // key -> {addr, sent, tries}
     this.retries = new Map();
+    this.faderLock = false;
+    this.reassert = new Map();
     // Requests in flight. The console answers in order but its USB-MIDI output
     // is slow (and shared with meters), so replies can lag by hundreds of ms;
     // it silently drops all-channel requests that arrive while it is busy.
@@ -39,7 +43,38 @@ class Console01V96 extends EventEmitter {
   get connected() { return !!this.output; }
 
   status() {
-    return { connected: this.connected, port: this.portName, sync: { ...this.sync } };
+    return { connected: this.connected, port: this.portName, sync: { ...this.sync }, faderLock: this.faderLock };
+  }
+
+  // "Logical faders": ignore level changes coming from the console's physical
+  // faders (worn/dirty faders report noise) and keep the console at the level
+  // set in the app by re-sending it. Values arriving while the initial sync
+  // runs are still accepted so the app learns the starting levels.
+  setFaderLock(on) {
+    this.faderLock = !!on;
+    this.emit('status', this.status());
+  }
+
+  isFaderKey(addr) {
+    return addr[0] === 1 && addr[2] === 0 && FADER_ELEMS.has(addr[1]);
+  }
+
+  // Returns true when the incoming value must be discarded.
+  guardFader(addr, value) {
+    if (!this.faderLock || this.sync.running || !this.isFaderKey(addr)) return false;
+    const k = key(addr);
+    const mine = this.state.get(k);
+    if (mine === undefined || mine === value) return false;
+    // Small noise is ignored silently; larger moves are pushed back to our value,
+    // at most every 250 ms per fader so a noisy fader cannot flood the link.
+    if (Math.abs(mine - value) > 3) {
+      const now = Date.now();
+      if (now - (this.reassert.get(k) || 0) > 250) {
+        this.reassert.set(k, now);
+        this.send(proto.buildChange(addr, mine, this.device, this.model));
+      }
+    }
+    return true;
   }
 
   // Is the console still listed by the MIDI driver?
@@ -140,15 +175,19 @@ class Console01V96 extends EventEmitter {
 
   storeScene(n, title) {
     this.send([0xf0, 0x43, 0x10 | this.device, 0x3e, 0x7f, 0x10, 0x20, (n >> 7) & 0x7f, n & 0x7f, 0x02, 0x00, 0xf7]);
-    if (title != null) this.setSceneTitle(n, title);
+    // Give the console time to write the memory before renaming it.
+    if (title != null) setTimeout(() => this.setSceneTitle(n, title), 400);
+    setTimeout(() => this.request([4, 0x0a, 0, 0]), 600);
   }
 
   setSceneTitle(n, title) {
-    const t = String(title).padEnd(16, ' ').slice(0, 16);
-    const chars = [...t].map(ch => ch.charCodeAt(0) & 0x7f);
+    // The console only displays printable ASCII; strip accents (ç -> c, ã -> a).
+    const ascii = String(title).normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^\x20-\x7e]/g, '?');
+    const t = ascii.padEnd(16, ' ').slice(0, 16);
+    const chars = [...t].map(ch => ch.charCodeAt(0));
     this.send([0xf0, 0x43, 0x10 | this.device, 0x3e, 0x7f, 0x10, 0x40, (n >> 7) & 0x7f, n & 0x7f, ...chars, 0xf7]);
-    this.state.set('scene:' + n, t.trimEnd());
-    this.emit('scene', n, t.trimEnd());
+    // Read it back so every client shows what the console really stored.
+    setTimeout(() => this.send([0xf0, 0x43, 0x30 | this.device, 0x3e, 0x7f, 0x10, 0x40, (n >> 7) & 0x7f, n & 0x7f, 0xf7]), 300);
   }
 
   requestSceneTitles(from = 1, to = 99) {
@@ -199,31 +238,44 @@ class Console01V96 extends EventEmitter {
     this.sync.done++;
     if (this.sync.done >= this.sync.total && this.queue.length === 0) {
       this.sync.running = false;
+      // Scene titles are cheap (one frame each); keep them in the state so the
+      // scene picker is ready on every client.
+      this.requestSceneTitles();
       if (this.failed.length) this.emit('error', new Error(`sync: no reply for ${this.failed.length} addresses: ${this.failed.slice(0, 20).join(' ')}`));
     }
     if (this.sync.done % 100 === 0 || !this.sync.running) this.emit('status', this.status());
+  }
+
+  // Debug: send a raw *request* (F0 43 3n ...). Writes are refused so the
+  // debug channel can never change the mix.
+  rawRequest(bytes) {
+    if (!Array.isArray(bytes) || bytes[0] !== 0xf0 || bytes[1] !== 0x43 || (bytes[2] & 0xf0) !== 0x30 || bytes.at(-1) !== 0xf7) return false;
+    if (!bytes.every(b => Number.isInteger(b) && b >= 0 && b <= 0xff)) return false;
+    return this.send(bytes);
   }
 
   onMessage(m) {
     // Scene title dump: F0 43 1n 3E 7F 10 40 hi lo <16 chars> F7
     if (m.length === 26 && m[4] === 0x7f && m[5] === 0x10 && m[6] === 0x40) {
       const n = (m[7] << 7) | m[8];
-      const t = String.fromCharCode(...m.slice(9, 25)).trimEnd();
+      // Empty memories answer "[   No Data!   ]"; expose them as null.
+      const raw = String.fromCharCode(...m.slice(9, 25));
+      const t = /No Data!/.test(raw) ? null : raw.trimEnd();
       this.state.set('scene:' + n, t);
       this.emit('scene', n, t);
       return;
     }
     const r = proto.parse(m);
-    if (!r) return;
+    if (!r) { this.emit('raw', m); return; }
     if (r.kind === 'param') {
       const k = key(r.addr);
       if (this.inflight.delete(k)) { this.retries.delete(k); this.progress(); }
-      this.store(r.addr, r.value, 'console');
+      if (!this.guardFader(r.addr, r.value)) this.store(r.addr, r.value, 'console');
     } else if (r.kind === 'bulk') {
       const k = key(r.addr);
       if (this.inflight.delete(k)) { this.retries.delete(k); this.progress(); }
       const [g, e, p] = r.addr;
-      r.values.forEach((v, c) => this.store([g, e, p, c], v, 'console'));
+      r.values.forEach((v, c) => { if (!this.guardFader([g, e, p, c], v)) this.store([g, e, p, c], v, 'console'); });
     } else if (r.kind === 'meter') {
       this.emit('meter', r.type, r.levels);
     }

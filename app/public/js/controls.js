@@ -29,7 +29,8 @@ export function unbindTree(root) {
 // pixels moved since the last event (dy > 0 = upwards) and onTap(event) for a
 // double tap / double click. One pointer per control; extra fingers are ignored
 // so two controls can be moved at once on a tablet.
-export function drag(el, { onStart, onMove, onEnd, onDoubleTap }) {
+export function drag(el, { onStart, onMove, onEnd, onDoubleTap, onTap }) {
+  let tapTimer = null;
   // Stop iOS/Android from scrolling or zooming the page when a gesture starts on
   // a control (touch-action alone is not honoured everywhere, e.g. inside SVG).
   el.style.touchAction = 'none';
@@ -61,7 +62,12 @@ export function drag(el, { onStart, onMove, onEnd, onDoubleTap }) {
       onEnd?.(ev);
       if (moved < 6) {
         const now = performance.now();
-        if (now - lastTap < 350) { lastTap = 0; onDoubleTap?.(ev); } else lastTap = now;
+        if (now - lastTap < 350) { lastTap = 0; clearTimeout(tapTimer); onDoubleTap?.(ev); }
+        else {
+          lastTap = now;
+          // A single tap fires only once it is clear it was not a double tap.
+          if (onTap) { clearTimeout(tapTimer); tapTimer = setTimeout(() => onTap(ev), 360); }
+        }
       }
     };
     el.addEventListener('pointermove', move);
@@ -148,6 +154,7 @@ export function knob(k, { min = 0, max = 127, home = min, label = '', format = S
     onMove: (dx, dy, ev) => { acc += (dy + dx) * span / (ev.shiftKey ? 600 : ev.pointerType === 'touch' ? 220 : 150); setv(acc); },
     onEnd: () => { dragging = false; },
     onDoubleTap: () => setv(home),
+    onTap: () => { if (!el.classList.contains('disabled')) fineAdjust({ k, min, max, home, label, format }); },
   });
   svg.addEventListener('wheel', e => { e.preventDefault(); setv(value + (e.deltaY < 0 ? 1 : -1) * Math.max(1, Math.round(span / 100))); }, { passive: false });
   return el;
@@ -165,6 +172,46 @@ export function select(k, options, { label = '' } = {}) {
   bind(sel, k, v => { sel.value = v; });
   sel.addEventListener('change', () => S.set(k, +sel.value));
   return label ? h('label', { class: 'sel' }, h('span', {}, label), sel) : sel;
+}
+
+// Big fine-adjust panel for one parameter: wide slider, -/+ steps and reset.
+// Opened by tapping a knob; much easier than turning a small dial with a finger.
+export function fineAdjust({ k, min, max, home, label, format }) {
+  const span = max - min;
+  const step = Math.max(1, Math.round(span / 100));
+  const val = h('div', { class: 'fine-val' });
+  const slider = h('input', { type: 'range', min, max, step: 1, class: 'fine-slider' });
+  const render = v => { val.textContent = format(v); slider.value = v; };
+  const setv = v => { v = Math.max(min, Math.min(max, Math.round(v))); S.set(k, v); render(v); };
+  slider.addEventListener('input', () => setv(+slider.value));
+  const btn = (txt, d) => h('button', { class: 'sheet-btn', onclick: () => setv(S.get(k) + d) }, txt);
+  const close = () => { off(); root.remove(); };
+  const box = h('div', { class: 'sheet fine' },
+    h('h2', {}, label || 'Ajuste'), val, slider,
+    h('div', { class: 'sheet-actions' }, btn('−−', -step * 5), btn('−', -1), h('button', { class: 'sheet-btn', onclick: () => setv(home) }, 'Padrão'), btn('+', 1), btn('++', step * 5)),
+    h('div', { class: 'sheet-actions' }, h('button', { class: 'sheet-btn primary', onclick: close }, 'OK')));
+  const root = h('div', { class: 'sheet-backdrop', onclick: e => { if (e.target === root) close(); } }, box);
+  const off = S.on(k, render);
+  render(S.get(k));
+  document.body.append(root);
+}
+
+// Touch-friendly modal sheet. `actions` = [{label, value, className}];
+// resolves with the chosen value (or null when dismissed). With `input`, the
+// text field value is returned as {value, text}.
+export function sheet({ title, text = '', input = null, actions }) {
+  return new Promise(resolve => {
+    const field = input ? h('input', { class: 'sheet-input', type: 'text', value: input.value || '', maxlength: input.max || 16, placeholder: input.placeholder || '', autocomplete: 'off' }) : null;
+    const close = v => { root.remove(); resolve(v); };
+    const box = h('div', { class: 'sheet', role: 'dialog', 'aria-modal': 'true' },
+      h('h2', {}, title), text ? h('p', {}, text) : null, field,
+      h('div', { class: 'sheet-actions' }, actions.map(a =>
+        h('button', { class: 'sheet-btn ' + (a.className || ''), onclick: () => close(field ? { value: a.value, text: field.value } : a.value) }, a.label))));
+    const root = h('div', { class: 'sheet-backdrop', onclick: e => { if (e.target === root) close(null); } }, box);
+    root.addEventListener('keydown', e => { if (e.key === 'Escape') close(null); if (e.key === 'Enter' && field) close({ value: actions.at(-1).value, text: field.value }); });
+    document.body.append(root);
+    (field || box.querySelector('.sheet-btn:last-child'))?.focus();
+  });
 }
 
 export function meter(className = '') {

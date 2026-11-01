@@ -17,3 +17,6 @@ ref/
 .idea/
 .DS_Store
 Thumbs.db
+
+# Local settings written by the server
+app/userdata.json
